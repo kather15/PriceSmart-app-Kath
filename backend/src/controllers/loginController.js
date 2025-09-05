@@ -1,7 +1,3 @@
-/*
-Como vamos a validar si es cliente o empleado,
-entonces importo ambos modelos
- */
 import CustomersModel from "../models/customers.js";
 import EmployeesModel from "../models/employee.js";
 import bcryptjs from "bcryptjs";
@@ -10,102 +6,91 @@ import { config } from "../config.js";
 
 const loginController = {};
 
-//Declarar dos contantes
-//Una que guarde el maximo de intentos posibles
-// Y otra que guarde el tiempo de bloqueo
-
 const maxAttempts = 3;
-const lockTime = 15 * 60 * 1000; //15 minutos
+const lockTime = 15 * 60 * 1000; 
 
 loginController.login = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // Validamos los 3 posibles niveles
-    // 1. Admin, 2. Empleado, 3. Cliente
+    let userFound;
+    let userType;
 
-    let userFound; //Variable que dice si encontramos un usuario
-    let userType; // Variable que dice que tipo de usuario es
-
-    // 1. Admin
-    // Varifiquemos si quien está ingresando es Admin
+    // 1. Validación Admin
     if (
       email === config.emailAdmin.email &&
       password === config.emailAdmin.password
     ) {
-      userType = "Admin";
+      userType = "admin"; // en minúscula pára ver si ingresaba la cuenta correcta
       userFound = { _id: "Admin" };
     } else {
       // 2. Empleado
       userFound = await EmployeesModel.findOne({ email });
-      userType = "Employee";
+      userType = "employee";
 
       // 3. Cliente
       if (!userFound) {
         userFound = await CustomersModel.findOne({ email });
-        userType = "Customer";
+        userType = "customer";
       }
     }
 
-    // Si no encontramos un usuario en ningun lado
+    // No se encontró usuario
     if (!userFound) {
-      return res.json({ message: "User not found" });
+      return res.status(404).json({ message: "User not found" });
     }
 
-    //Primero, determino si el usuario está bloqueado o no
-    if (userType !== "Admin") {
-      if (userFound.lockTime > Date.now()) {
+    
+    if (userType !== "admin") {
+      if (userFound.lockTime && userFound.lockTime > Date.now()) {
         const minutosRestantes = Math.ceil(
-          userFound.lockTime - Date.now() / 60000
+          (userFound.lockTime - Date.now()) / 60000
         );
         return res.status(403).json({
-          message: "Cuenta bloqueada, intenta de nuevo en" + minutosRestantes,
+          message: `Cuenta bloqueada. Intenta de nuevo en ${minutosRestantes} minutos`,
         });
       }
-    }
 
-    // Si no es administrador, validamos la contraseña
-    if (userType !== "Admin") {
+      // Validar contraseña
       const isMatch = await bcryptjs.compare(password, userFound.password);
       if (!isMatch) {
-        //Si la contraseña es incorrecta
-        //incrementar el numero de intentos fallidos
-        userFound.loginAttempts = userFound.loginAttempts + 1;
+        userFound.loginAttempts = (userFound.loginAttempts || 0) + 1;
 
-        if (userFound.loginAttempts > maxAttempts) {
+        if (userFound.loginAttempts >= maxAttempts) {
           userFound.lockTime = Date.now() + lockTime;
           await userFound.save();
           return res.status(403).json({ message: "Usuario bloqueado" });
         }
 
         await userFound.save();
-
-        return res.json({ message: "Invalid password" });
+        return res.status(401).json({ message: "Contraseña incorrecta" });
       }
 
+      // Reset de intentos fallidos
       userFound.loginAttempts = 0;
       userFound.lockTime = null;
       await userFound.save();
     }
 
-    // Generar token
-    jsonwebtoken.sign(
-      //1- Que voy a guardar
-      { id: userFound._id, userType },
-      //2- Clave secreta
+    // 
+    const token = jsonwebtoken.sign(
+      { id: userFound._id, userType }, // userType ya está en minúsculas
       config.JWT.secret,
-      //3- Cuando expira
       { expiresIn: config.JWT.expiresIn }
     );
 
+    // Guardar en cookie
     res.cookie("authToken", token, {
+      httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000,
-      path: "/",
       sameSite: "lax",
     });
-    res.json({ message: "login successful" });
+
+    res.json({ message: "Login successful", userType });
   } catch (error) {
-    console.log(error);
+    console.error("Login error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
+
 export default loginController;

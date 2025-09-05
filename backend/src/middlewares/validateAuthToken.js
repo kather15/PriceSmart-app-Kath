@@ -4,33 +4,28 @@ import { config } from "../config.js";
 export const validateAuthToken = (allowedUserTypes = []) => {
   return (req, res, next) => {
     try {
-      //1- Extraer el token de las cookies
       const { authToken } = req.cookies;
-      //1- Validar si existen las cookies
+
       if (!authToken) {
-        return res.json({
-          message: "No auth Cookie found, authorization required",
+        return res.status(401).json({
+          message: "No auth token found. Authorization required.",
         });
       }
 
-      //2- Extraer el token de las cookies
-      //   const {authToken} = req.cookies;
-
-      //3- Extraemos toda la información que tiene el token
       const decoded = jsonwebtoken.verify(authToken, config.JWT.secret);
-
-      //Almacenar los datos del usuario en un request
       req.user = decoded;
 
-      //Verificar el rol
-      if (!allowedUserTypes.includes(decoded.userType)) {
-        return res.json({ message: "Access denied" });
+      const userType = decoded.userType.toLowerCase(); 
+      const allowed = allowedUserTypes.map((t) => t.toLowerCase());
+
+      if (!allowed.includes(userType)) {
+        return res.status(403).json({ message: "Access denied." });
       }
 
-      //Si el si está, podemos continuar
       next();
     } catch (error) {
-      console.log("error" + error);
+      console.error("Auth error:", error);
+      return res.status(401).json({ message: "Invalid or expired token." });
     }
   };
 };
